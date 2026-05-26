@@ -4,14 +4,12 @@ const { wrapper } = require('axios-cookiejar-support');
 const { CookieJar } = require('tough-cookie');
 
 // ==========================================
-// ⚙️ 1. CONFIGURATION (ตั้งค่าระบบ)
+// 1. CONFIGURATION
 // ==========================================
 
-// ข้อมูลล็อกอิน (TPMAP Logbook)
 const LOGBOOK_USER = "pelcd500901";
 const LOGBOOK_PASS = "51427938";
 
-// URL สำหรับยิง HTTP Requests ตรงเข้าคลังข้อมูล
 const AUTH_URL = "https://kankrao.tpmap.in.th/auth";
 const API_OLD = "https://api2.logbook.emenscr.in.th/people/find";
 const API_NEW_MEMBER = "https://api2.logbook.emenscr.in.th/v1/tpmaplogbook68/housemember/member/";
@@ -23,7 +21,6 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// เปิดระบบจัดการ Cookie แบบไร้ Browser เพื่อจำลองเซสชันความปลอดภัย
 const jar = new CookieJar();
 const clientHttp = wrapper(axios.create({ 
     jar, 
@@ -35,11 +32,11 @@ const clientHttp = wrapper(axios.create({
 }));
 
 // ==========================================
-// 🛠️ 2. CORE ENGINE (DIRECT HTTP SEARCH)
+// 2. CORE ENGINE (DIRECT HTTP SEARCH)
 // ==========================================
 
 async function loginToLogbook() {
-    console.log("🔄 [SYSTEM] Attempting Direct HTTP Login...");
+    console.log("[SYSTEM] Attempting Direct HTTP Login...");
     try {
         const params = new URLSearchParams();
         params.append('username', LOGBOOK_USER);
@@ -48,15 +45,14 @@ async function loginToLogbook() {
         await clientHttp.post(AUTH_URL, params, {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
         });
-        console.log("✅ [LOGBOOK] Login Success & Session Active.");
+        console.log("[LOGBOOK] Login Success & Session Active.");
         return true;
     } catch (e) {
-        console.error(`❌ [LOGBOOK] Login Failed: ${e.message}`);
+        console.error(`[LOGBOOK] Login Failed: ${e.message}`);
         return false;
     }
 }
 
-// ฟังก์ชันตัวกลางในการดึงค่ากระจายตาม API ต่างๆ (ป้องกัน Key สลับชื่อ)
 function extractVal(dataSources, possibleKeys) {
     for (const source of dataSources) {
         if (!source || typeof source !== 'object') continue;
@@ -73,7 +69,6 @@ function extractVal(dataSources, possibleKeys) {
     return "-";
 }
 
-// แกนหลักสำหรับค้นหาเชิงลึก (รับค่าแยกประเภทมาแล้ว)
 async function runLogbookSearch(queryValue, type) {
     try {
         let results = { api_old: null, api_new: null, house_data: null, housesurvey_data: null };
@@ -81,7 +76,6 @@ async function runLogbookSearch(queryValue, type) {
         let nidForMember = (type === 'id') ? queryValue : null;
 
         if (type === 'houseid') {
-            // --- หมวด 1: ค้นหาด้วย House ID ตรงๆ ---
             try {
                 const reqHouse = await clientHttp.get(`${API_NEW_HOUSEMEMBER}${queryValue}`);
                 if (reqHouse.data && Array.isArray(reqHouse.data) && reqHouse.data.length > 0) {
@@ -119,7 +113,6 @@ async function runLogbookSearch(queryValue, type) {
             } catch (e) {}
 
         } else {
-            // --- หมวด 2 & 3: ค้นด้วย เลขบัตร หรือ ชื่อ-นามสกุล ---
             const payload = new URLSearchParams();
             payload.append('draw', '1');
             payload.append('start', '0');
@@ -133,7 +126,7 @@ async function runLogbookSearch(queryValue, type) {
             } else if (type === 'name') {
                 payload.append('search[value]', '');
                 payload.append('NID', '');
-                payload.append('fullname', queryValue); // ส่งชื่อและนามสกุลที่ผู้ใช้พิมพ์เข้ามา
+                payload.append('fullname', queryValue);
                 payload.append('lastname', '');
             }
 
@@ -148,7 +141,6 @@ async function runLogbookSearch(queryValue, type) {
             }
 
             if (resOld && resOld.data && resOld.data.length > 0) {
-                // หากค้นด้วยชื่อแล้วดันเจอคนซ้ำกันหลายคน ส่งลิสต์กลับไปให้เลือก
                 if (type === 'name' && resOld.data.length > 1) {
                     return { MULTIPLE_MATCHES: resOld.data, query: queryValue };
                 }
@@ -162,7 +154,6 @@ async function runLogbookSearch(queryValue, type) {
             }
         }
 
-        // ดึงคลังข้อมูลระบบใหม่ปี 68 มารวมร่าง
         if (nidForMember) {
             try {
                 const reqNew = await clientHttp.get(`${API_NEW_MEMBER}${nidForMember}`);
@@ -203,20 +194,23 @@ async function runLogbookSearch(queryValue, type) {
 }
 
 // ==========================================
-// 🧼 3. DATA FORMATTER HELPER (คลีนค่าเอาคีย์ขยะออก)
+// 3. DATA FORMATTER HELPER (THAI STRING VALUE)
 // ==========================================
 
+// ฟังก์ชันดึงค่าสลับมาต่อกันเป็นข้อความภาษาไทยตรงๆ อ่านและนำไปแมปใช้ง่ายตามต้องการ
 function buildAddress(d) {
     let addrParts = [];
     let an = d.address_num; let mo = d.moo;
     let vl = d.village_name; let tm = d.tambol_name || d.tumbol_name;
     let am = d.amphur_name || d.ampuhur_name; let pv = d.province_name;
+    
     if (an && !['','null','None','-'].includes(String(an))) addrParts.push(`เลขที่ ${an}`);
     if (mo && !['','null','None','-'].includes(String(mo))) addrParts.push(`ม.${mo}`);
     if (vl && !['','null','None','-'].includes(String(vl))) addrParts.push(`บ.${vl}`);
     if (tm && !['','null','None','-'].includes(String(tm))) addrParts.push(`ต.${tm}`);
     if (am && !['','null','None','-'].includes(String(am))) addrParts.push(`อ.${am}`);
     if (pv && !['','null','None','-'].includes(String(pv))) addrParts.push(`จ.${pv}`);
+    
     return addrParts.length > 0 ? addrParts.join(" ") : "-";
 }
 
@@ -224,16 +218,16 @@ function formatJsonOutput(rawData) {
     if (!rawData) return null;
     
     const keyMapping = {
-        "NID": "💳 เลขบัตรฯ", "gender": "⚥ เพศ", "birthdate": "🎂 วันเกิด",
-        "ebmn_age": "🎂 อายุ (ปี)", "ebmn_age_month": "อายุ (เดือน)",
-        "occupation": "💼 อาชีพ", "education": "🎓 การศึกษา", "religion": "🛐 ศาสนา",
-        "relation": "👨‍👩‍👦 สถานะในบ้าน", "chronic_patient": "🤒 ป่วยเรื้อรัง",
-        "self_reliance": "💪 การพึ่งพาตนเอง", "main_right": "🏥 สิทธิรักษา",
-        "main_hospital": "🏥 โรงพยาบาล", "disabled": "♿ พิการ", "house_id": "🏠 รหัสบ้าน",
-        "HOUSE_MEMBER_CNT": "👥 สมาชิกในบ้าน (คน)", "house_type": "ลักษณะบ้าน", 
-        "land_occupation_type": "ลักษณะที่ดิน", "HH_income": "💰 รายได้ครอบครัว (บ./ปี)",
-        "avg_individual_income": "💰 รายได้เฉลี่ย (บ./คน/ปี)", "formal_debt": "💳 หนี้ในระบบ", 
-        "informal_debt": "💸 หนี้นอกระบบ", "yearly_savings": "🏦 เงินออม", "cid": "💳 เลขบัตรฯ", "citizen_id": "💳 เลขบัตรฯ"
+        "NID": "nationalId", "gender": "gender", "birthdate": "birthdate",
+        "ebmn_age": "ageYears", "ebmn_age_month": "ageMonths",
+        "occupation": "occupation", "education": "education", "religion": "religion",
+        "relation": "householdStatus", "chronic_patient": "chronicPatient",
+        "self_reliance": "selfReliance", "main_right": "medicalRight",
+        "main_hospital": "mainHospital", "disabled": "isDisabled", "house_id": "houseId",
+        "HOUSE_MEMBER_CNT": "householdMemberCount", "house_type": "houseType", 
+        "land_occupation_type": "landOccupationType", "HH_income": "householdIncomePerYear",
+        "avg_individual_income": "averageIncomePerPersonPerYear", "formal_debt": "formalDebt", 
+        "informal_debt": "informalDebt", "yearly_savings": "yearlySavings", "cid": "nationalId", "citizen_id": "nationalId"
     };
 
     const junkPrefixes = ["DT", "indicator", "F1", "EEF", "V_", "MOF", "MPI", "poor", "sum_", "_id", "ID", "dla"];
@@ -242,11 +236,10 @@ function formatJsonOutput(rawData) {
     const cleanSingle = (d) => {
         let res = {};
         let fullName = `${d.prefix_name || ''}${d.name || ''} ${d.surname || ''}`.trim();
-        if (fullName) res["👤 ชื่อ"] = fullName;
+        if (fullName) res["fullName"] = fullName;
 
-        // จัดการอายุดึงค่าที่สมบูรณ์ที่สุดมาใช้งาน
         let finalAge = d.age || d.ebmn_age || d.age_year || "-";
-        if (finalAge !== "-") res["🎂 อายุ (ปี)"] = String(finalAge);
+        if (finalAge !== "-") res["ageYears"] = parseInt(finalAge) || finalAge;
 
         for (let [k, v] of Object.entries(d)) {
             if (extraSkip.includes(k)) continue;
@@ -254,10 +247,18 @@ function formatJsonOutput(rawData) {
             if (junkPrefixes.some(p => k.startsWith(p)) && !["NID", "house_id", "HOUSE_MEMBER_CNT"].includes(k)) continue;
 
             let keyName = keyMapping[k] || k;
-            res[keyName] = v;
+            
+            if (!isNaN(v) && k !== "NID" && k !== "house_id" && k !== "cid" && k !== "citizen_id") {
+                res[keyName] = Number(v);
+            } else {
+                res[keyName] = v;
+            }
         }
-        let address = buildAddress(d);
-        if (address !== "-") res["📍 ที่อยู่"] = address;
+
+        // ยัดที่อยู่กลับมาในรูปแบบตัวแปร String ข้อความไทยตามแบบฉบับเดิม
+        let addressStr = buildAddress(d);
+        if (addressStr !== "-") res["address"] = addressStr;
+        
         return res;
     };
 
@@ -267,42 +268,38 @@ function formatJsonOutput(rawData) {
     return cleanSingle(rawData);
 }
 
-// Middleware ยิงฟังก์ชันค้นหาแยกประเภทและเช็ก Session อัตโนมัติ
 async function handleSearchRequest(req, res, queryValue, type) {
     let data = await runLogbookSearch(queryValue, type);
 
-    // ปลุกระบบ Re-login ทันทีเมื่อ Session หลุด
     if (data === "UNAUTHORIZED") {
-        console.log("⚠️ Session Expired. Re-logging in...");
+        console.log("[WARNING] Session Expired. Re-logging in...");
         const loginSuccess = await loginToLogbook();
         if (loginSuccess) {
             data = await runLogbookSearch(queryValue, type);
         } else {
-            return res.status(500).json({ status: "error", message: "ไม่สามารถอัปเดตเซสชันกับคลังข้อมูลได้" });
+            return res.status(500).json({ status: "error", message: "Failed to refresh system session token" });
         }
     }
 
-    if (data === "ERROR") return res.status(500).json({ status: "error", message: "ระบบเกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูลภายนอก" });
-    if (!data) return res.status(404).json({ status: "not_found", message: `❌ ไม่พบข้อมูลจากคำค้นหา: ${queryValue}` });
+    if (data === "ERROR") return res.status(500).json({ status: "error", message: "External internal database connection error" });
+    if (!data) return res.status(404).json({ status: "not_found", message: `Data not found for query: ${queryValue}` });
 
-    // เคสกรณีค้นด้วยชื่อแล้วพบข้อมูลบุคคลซ้ำซ้อน
     if (data.MULTIPLE_MATCHES) {
-        let options = data.MULTIPLE_MATCHES.slice(0, 10).map((m, i) => ({
+        let options = data.MULTIPLE_MATCHES.slice(0, 10).map((m) => ({
             choice_id: m.NID || m.cid || m.citizen_id,
             name: `${m.prefix_name || ''}${m.name || ''} ${m.surname || ''}`.trim(),
-            age: m.age || m.ebmn_age || "-",
+            age: parseInt(m.age || m.ebmn_age) || "-",
             address: buildAddress(m)
         }));
 
         return res.json({
             status: "multiple_matches",
-            message: "⚠️ พบรายชื่อบุคคลซ้ำกันหลายรายการ กรุณานำค่า 'choice_id' ไปค้นหาต่อผ่านทาง Route ค้นด้วยเลขบัตรแทนเพื่อความแม่นยำ",
+            message: "Multiple records found. Please use the 'choice_id' to search again via the ID route for accurate data.",
             matches_count: options.length,
             options: options
         });
     }
 
-    // คืนข้อมูลคลีนรูปแบบ JSON ภาษาไทยอ่านง่าย
     return res.json({
         status: "success",
         search_type: type,
@@ -316,51 +313,46 @@ async function handleSearchRequest(req, res, queryValue, type) {
 }
 
 // ==========================================
-// 🌐 4. EXPRESS ROUTING (SEPARATED ENDPOINTS)
+// 4. EXPRESS ROUTING
 // ==========================================
 
-// หน้าแสดงคู่มือเบื้องต้น
 app.get('/', (req, res) => {
     res.json({
         status: "online",
-        message: "🚀 TPMAP Clean API is ready",
-        examples: {
-            search_by_id: "http://localhost:3000/api/search/id/110xxxxxxxxxx",
-            search_by_name: "http://localhost:3000/api/search/name/สมชาย ใจดี",
-            search_by_houseid: "http://localhost:3000/api/search/houseid/32_chars_hex_house_id"
+        message: "TPMAP Clean API System is ready",
+        endpoints: {
+            search_by_id: "/api/search/id/:id",
+            search_by_name: "/api/search/name/:name",
+            search_by_houseid: "/api/search/houseid/:houseid"
         }
     });
 });
 
-// 📌 1. ค้นหาด้วยเลขบัตรประชาชน (Citizen ID)
 app.get('/api/search/id/:id', async (req, res) => {
     const idCard = req.params.id.replace(/\s+/g, "");
     if (!/^\d{13}$/.test(idCard)) {
-        return res.status(400).json({ status: "bad_request", message: "⚠️ รูปแบบเลขบัตรประชาชนไม่ถูกต้อง ต้องเป็นตัวเลข 13 หลักเท่านั้น" });
+        return res.status(400).json({ status: "bad_request", message: "Invalid National ID format. Must be exactly 13 numeric digits." });
     }
     await handleSearchRequest(req, res, idCard, 'id');
 });
 
-// 📌 2. ค้นหาด้วย ชื่อ และ นามสกุล (Name Search)
 app.get('/api/search/name/:name', async (req, res) => {
     const fullName = req.params.name.trim();
     if (fullName.length < 2) {
-        return res.status(400).json({ status: "bad_request", message: "⚠️ กรุณาระบุชื่อ-นามสกุลที่ต้องการค้นหาให้ชัดเจนกว่านี้" });
+        return res.status(400).json({ status: "bad_request", message: "Invalid name parameter. Character length must be at least 2." });
     }
     await handleSearchRequest(req, res, fullName, 'name');
 });
 
-// 📌 3. ค้นหาด้วยรหัสบ้าน (House ID)
 app.get('/api/search/houseid/:houseid', async (req, res) => {
     const houseId = req.params.houseid.replace(/\s+/g, "");
     if (houseId.length !== 32) {
-        return res.status(400).json({ status: "bad_request", message: "⚠️ รหัสบ้าน (House ID) ไม่ถูกต้อง ต้องยาว 32 หลัก" });
+        return res.status(400).json({ status: "bad_request", message: "Invalid House ID format. Must be exactly 32 hexadecimal characters." });
     }
     await handleSearchRequest(req, res, houseId, 'houseid');
 });
 
-// บูตระบบเซิร์ฟเวอร์
 app.listen(PORT, async () => {
-    console.log(`🌐 Express Pure API Server is listening on port ${PORT}`);
+    console.log(`🌐 Express API Server running on port ${PORT}`);
     await loginToLogbook();
 });
